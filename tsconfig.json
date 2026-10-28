@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2023", "module": "ESNext", "moduleResolution": "bundler",
+    "strict": true, "noEmit": true, "jsx": "preserve", "jsxImportSource": "@opentui/solid",
+    "allowImportingTsExtensions": true, "skipLibCheck": true, "types": ["node"]
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "opencode-commit-review",
+  "version": "0.1.0",
+  "description": "Index-first native commit review for OpenCode V2",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": { "types": "./dist/types/index.d.ts", "import": "./dist/index.js" },
+    "./tui": { "types": "./dist/types/tui.d.ts", "import": "./dist/tui.js" },
+    "./rpc": { "types": "./dist/types/rpc.d.ts", "import": "./dist/rpc.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "bun scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run build"
+  },
+  "packageManager": "bun@1.4.3",
+  "dependencies": {
+    "@opencode/plugin": "2.2.0",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@opentui/core": "0.7.0",
+    "@opentui/solid": "0.7.0",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@opencode/theme": "2.2.0",
+    "@opentui/core": "0.7.0",
+    "@opentui/solid": "0.7.0",
+    "@types/node": "^26.0.0",
+    "babel-preset-solid": "^1.9.12",
+    "esbuild": "^0.28.1",
+    "solid-js": "1.9.12",
+    "typescript": "^6.0.0"
+  }
+}
