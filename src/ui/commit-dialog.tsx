@@ -10,6 +10,8 @@ import { FileSidebar } from "./file-sidebar.js"
 import { DiffPane } from "./diff-pane.js"
 import { MessagePreview } from "./message-preview.js"
 import { Footer, type FooterAction } from "./footer.js"
+import { EditorActions } from "./editor-actions.js"
+import { DialogNotice, type Notice } from "./dialog-notice.js"
 import { fileTree, treeRowKey, treeRowID, type TreeRow } from "./file-tree.js"
 
 export type ReviewClient = RpcClient<typeof CommitReview>
@@ -31,6 +33,7 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   const [content, setContent] = createSignal("Loading diff…")
   const [message, setMessage] = createSignal("")
   const [expanded, setExpanded] = createSignal(false)
+  const [editorFocus, setEditorFocus] = createSignal(-1) // editor, then Commit and Push/Commit/Done
   const [status, setStatus] = createSignal(props.initial.error ?? "Write a message, press Ctrl+G to generate, or commit with an empty message to auto-generate.")
   const [error, setError] = createSignal(!!props.initial.error)
   const [busy, setBusy] = createSignal(false)
@@ -48,6 +51,8 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   const [oid, setOid] = createSignal("")
   const [pushable, setPushable] = createSignal(false)
   const [pushed, setPushed] = createSignal(false)
+  const [notice, setNotice] = createSignal<Notice>()
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let filesPane: ScrollBoxRenderable | undefined; let diffPane: ScrollBoxRenderable | undefined
   let disposed = false; let generation = 0; let diffRequest = 0
   const review = () => ({ reviewID: state().reviewID })
@@ -55,19 +60,29 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   const height = () => Math.max(6, Math.min(45, dimensions().height - (confirmation() ? 20 : 18)))
   const usable = () => dimensions().width >= 84 && dimensions().height >= 26
   const width = () => Math.max(1, Math.min(180, dimensions().width - 4))
-  const dialogHeight = () => usable() ? height() + (confirmation() ? 15.5 : 13.5) : 5
+  const dialogHeight = () => usable() ? height() + (confirmation() ? 15 : 13) : 5
   const editorHeight = () => Math.max(8, Math.min(24, dialogHeight() - 4))
   // V2.2's largest host surface is 116 columns. Center wider plugin content
   // within that surface without inspecting or mutating host renderables.
   const horizontalInset = () => Math.floor((Math.min(116, dimensions().width - 2) - width()) / 2)
-  const report = (cause: unknown) => { if (!disposed) { const message = cause instanceof Error ? cause.message : String(cause); setStatus(message); setError(true); ctx.ui.toast.show({ variant: "error", message }) } }
+  const dismissNotice = () => { clearTimeout(noticeTimer); setNotice(undefined) }
+  const notify = (message: string, variant: Notice["variant"] = "warning") => {
+    if (disposed) return
+    clearTimeout(noticeTimer); setNotice({ message, variant })
+    noticeTimer = setTimeout(() => setNotice(undefined), 6000)
+  }
+  const report = (cause: unknown) => { if (!disposed) { const message = cause instanceof Error ? cause.message : String(cause); setStatus(message); setError(true); notify(message, "error") } }
   function invalidate() {
     generation++; if (!manual()) setMessage(""); setGenerating(false)
   }
   async function update() {
     const next = await props.rpc.status(review(), options)
     if (disposed) return
+    applyState(next)
+  }
+  function applyState(next: ReviewState) {
     const key = selected()
+    const previousError = state().error
     if (next.revision !== state().revision) invalidate()
     const nextTree = fileTree(next.files)
     batch(() => {
@@ -78,7 +93,7 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
       else if (current.length && !current.some(staged)) setView("unstaged")
     })
     void loadDiff()
-    if (next.error) { setError(true); setStatus(next.error) }
+    if (next.error) { setError(true); setStatus(next.error); if (next.error !== previousError) notify(next.error, "error") }
   }
   async function loadDiff() {
     const request = ++diffRequest
@@ -94,19 +109,23 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   async function toggleStage() {
     const row = selectedRow()
     const files = selectedFiles()
-    if (busy() || oid() || !row || !files.length) return
+    if (busy()) return
+    if (oid()) { notify("Already committed. Reopen /commit to continue."); return }
+    if (!row || !files.length) { notify("Select changes to stage or unstage."); return }
     setConfirmation(undefined); setBusy(true); invalidate()
     try {
       const input = { ...revision(), path: row.path }
       if (files.every((file) => staged(file) && !unstaged(file))) await props.rpc.unstageFile(input, options)
       else await props.rpc.stageFile(input, options)
-      await update(); await loadDiff(); setError(false); setStatus("Index updated. Escape will keep these staging changes.")
+      await update(); await loadDiff(); setError(false)
     } catch (cause) { report(cause); await update().catch(report) }
     finally { if (!disposed) setBusy(false) }
   }
   function askDiscard() {
     const row = selectedRow()
-    if (busy() || oid() || focus() > 1 || !row) return
+    if (busy() || focus() > 1) return
+    if (oid()) { notify("Already committed. Reopen /commit to continue."); return }
+    if (!row) { notify("Select changes to discard."); return }
     setConfirmation(undefined); setDiscardOption(0)
     setDiscard({ path: row.path, paths: selectedFiles().map((file) => file.path), revision: state().revision })
   }
@@ -119,14 +138,23 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     try {
       await props.rpc.discardChanges({ ...review(), revision: current.revision, paths: current.paths, mode: index === 0 ? "all" : "unstaged" }, options)
       await update()
-      setStatus(`${index === 0 ? "All" : "Unstaged"} changes discarded for ${displayPath(current.path)}.`)
     } catch (cause) { report(cause); await update().catch(report) }
     finally { if (!disposed) setBusy(false) }
   }
   async function generate() {
-    if (disposed || busy() || generating() || discard() || oid() || !state().hasStaged || !state().revision) return
-    const request = ++generation; setGenerating(true); setError(false)
+    if (disposed || busy() || generating() || confirmation() || discard()) return
+    if (oid()) { notify("Already committed. Reopen /commit to continue."); return }
+    let request = ++generation; setGenerating(true); setError(false)
     try {
+      // Polling can lag a manual Git stage. Refresh before checking eligibility,
+      // and never silently ignore an explicit request when the index is empty.
+      const next = await props.rpc.status(review(), options)
+      if (disposed || request !== generation) return
+      batch(() => { applyState(next); setGenerating(true) })
+      request = ++generation
+      if (next.error) throw new Error(next.error)
+      if (!next.hasStaged) { notify("Stage changes before generating a commit message."); return }
+      if (!next.revision) throw new Error("Resolve Git conflicts before generating a commit message.")
       const result = await props.rpc.generateMessage(revision(), options)
       if (disposed || request !== generation || result.revision !== state().revision) return
       setManual(false); setMessage(result.message)
@@ -140,7 +168,10 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     setStatus(`Publish ${destination.count} outgoing commit(s) to ${destination.remote}/${destination.ref}${destination.needsUpstream ? " · establish new upstream? (count includes all local history)" : "?"}`)
   }
   async function submit(andPush: boolean) {
-    if (busy() || generating() || confirmation() || discard() || oid() || !state().hasStaged) return
+    if (busy() || generating() || confirmation() || discard()) return
+    if (oid()) { notify("Already committed. Reopen /commit to continue."); return }
+    if (state().error) { report(new Error(state().error)); return }
+    if (!state().hasStaged) { notify("Stage changes before committing."); return }
     const approved = revision()
     const commitMessage = message().trim() || await generate()
     if (!commitMessage || disposed || approved.revision !== state().revision) return
@@ -148,19 +179,26 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     try {
       const result = await props.rpc.commit({ ...approved, message: commitMessage }, options)
       if (disposed) {
-        ctx.ui.toast.show({ variant: result.matches ? "success" : "error", message: result.warning ?? `Committed ${result.oid.slice(0, 12)}. Dialog closed; no push attempted.` })
+        ctx.ui.toast.show({ variant: result.matches ? "success" : "error", message: result.warning ?? `Committed ${result.oid.slice(0, 12)}. No push attempted.` })
         return
       }
       setOid(result.oid); setPushable(result.matches); setMessage("")
+      if (expanded()) { setExpanded(false); setFocus(4) }
       setStatus(result.warning ?? `Committed ${result.oid.slice(0, 12)}`); setError(!result.matches)
+      if (!result.matches) notify(status(), "error")
       if (andPush && result.matches && !disposed) await askPush()
     } catch (cause) {
-      if (disposed) ctx.ui.toast.show({ variant: "error", message: "Commit request ended with an error after close. Inspect Git before retrying; no push was attempted." })
+      if (disposed) ctx.ui.toast.show({ variant: "error", message: "Commit error. Check Git before retrying. No push attempted." })
       else { report(cause); await update().catch(report) }
     }
     finally { if (!disposed) setBusy(false) }
   }
-  async function retryPush() { if (busy() || !pushable() || pushed()) return; try { await askPush() } catch (cause) { report(cause) } }
+  async function retryPush() {
+    if (busy()) return
+    if (pushed()) { notify("Already pushed."); return }
+    if (!pushable()) { notify("Push blocked. Review the local commit first."); return }
+    try { await askPush() } catch (cause) { report(cause) }
+  }
   async function confirm() {
     const action = confirmation(); setConfirmation(undefined); setFocus(0)
     const destination = target()
@@ -168,11 +206,11 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     setBusy(true); setStatus("Pushing confirmed commit…")
     try {
       await props.rpc.pushExistingCommit({ ...review(), oid: oid(), destination }, options)
-      if (disposed) ctx.ui.toast.show({ variant: "success", message: "Commit pushed successfully after dialog close." })
-      else { setPushed(true); setStatus("Commit pushed successfully."); setError(false) }
+      if (disposed) ctx.ui.toast.show({ variant: "success", message: "Commit pushed." })
+      else { setPushed(true); setError(false) }
     }
     catch (cause) {
-      if (disposed) ctx.ui.toast.show({ variant: "error", message: "Push failed after close. The local commit is retained; inspect Git before retrying." })
+      if (disposed) ctx.ui.toast.show({ variant: "error", message: "Push failed. Local commit kept; check Git before retrying." })
       else report(cause)
     }
     finally { if (!disposed) setBusy(false) }
@@ -181,14 +219,24 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     { label: "Confirm push", run: () => void confirm(), disabled: busy() },
     { label: "Cancel", run: () => { setConfirmation(undefined); setFocus(0) } },
   ] : [
-    { label: "Commit: c", disabled: busy() || generating() || !state().hasStaged || !!oid(), run: () => void submit(false) },
-    { label: oid() ? pushed() ? "Pushed" : "Retry push: p" : "Commit and push: p", disabled: busy() || generating() || (oid() ? !pushable() || pushed() : !state().hasStaged), run: () => void (oid() ? retryPush() : submit(true)) },
+    { label: "Commit: c", disabled: busy() || generating(), run: () => void submit(false) },
+    { label: oid() ? pushed() ? "Pushed" : "Retry push: p" : "Commit and push: p", disabled: busy() || generating(), run: () => void (oid() ? retryPush() : submit(true)) },
   ])
   const activate = () => { if (focus() === 3) { if (!confirmation()) void generate(); return }; const action = actions()[focus() - 4]; if (action && !action.disabled) action.run() }
-  const expand = () => { if (!busy() && !oid() && !discard()) { setFocus(2); setExpanded(true) } }
+  const expand = () => { if (!busy() && !discard()) { setFocus(2); setEditorFocus(-1); setExpanded(true) } }
   const closeEditor = () => { setExpanded(false); setFocus(2) }
+  const editorActions = createMemo<FooterAction[]>(() => [
+    { label: "Commit and Push", disabled: busy() || generating(), run: () => void submit(true) },
+    { label: "Commit", disabled: busy() || generating(), run: () => void submit(false) },
+    { label: "Done ↵", run: closeEditor },
+  ])
+  const activateEditor = () => {
+    const action = editorActions()[editorFocus() < 0 ? 2 : editorFocus()]
+    if (action && !action.disabled) action.run()
+  }
+  const navigateEditor = (delta: number) => setEditorFocus((current) => (current + 1 + delta + 4) % 4 - 1)
   const changeMessage = (value: string) => { generation++; setGenerating(false); setManual(true); setMessage(value) }
-  const generateDisabled = () => busy() || generating() || !!confirmation() || !!discard() || !!oid() || !state().hasStaged
+  const generateDisabled = () => busy() || generating() || !!confirmation() || !!discard()
   const shortcuts = createMemo(() => {
     if (busy() || discard() || expanded()) return ""
     if (focus() === 2) return "e Expand  Ctrl+G Generate"
@@ -224,7 +272,15 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     { bind: "v", run: toggleView }, { bind: "ctrl+g", run: () => { if (!confirmation()) void generate() } },
     { bind: "e", run: expand },
     { bind: "c", run: () => void submit(false) }, { bind: "p", run: () => { if (!confirmation()) void (oid() ? retryPush() : submit(true)) } },
-  ].map((command) => ({ ...command, enabled: command.bind === "escape" || (usable() && !discard() && (command.bind === "ctrl+g" || (!expanded() && (command.bind === "e" ? focus() === 2 && !busy() && !oid() : focus() !== 2 || command.bind === "tab" || command.bind === "shift+tab")))) })) }))
+  ].map((command) => ({ ...command, enabled: command.bind === "escape" || (usable() && !discard() && (command.bind === "ctrl+g" || (!expanded() && (command.bind === "e" ? focus() === 2 && !busy() : focus() !== 2 || command.bind === "tab" || command.bind === "shift+tab")))) })) }))
+  ctx.keymap.layer(() => ({ mode: "modal", priority: 105, commands: [
+    { bind: "return", run: activateEditor, enabled: expanded() },
+    { bind: "tab", run: () => navigateEditor(1), enabled: expanded() },
+    { bind: "shift+tab", run: () => navigateEditor(-1), enabled: expanded() },
+    { bind: "space", run: activateEditor, enabled: expanded() && editorFocus() >= 0 },
+    { bind: "c", run: () => { const action = editorActions()[1]; if (!action.disabled) action.run() }, enabled: expanded() && editorFocus() >= 0 },
+    { bind: "p", run: () => { const action = editorActions()[0]; if (!action.disabled) action.run() }, enabled: expanded() && editorFocus() >= 0 },
+  ] }))
   const moveDiscard = (delta: number) => { setDiscardOption((index) => (index + delta + 3) % 3) }
   ctx.keymap.layer(() => ({ mode: "modal", priority: 110, commands: [
     { bind: "escape", run: () => setDiscard(undefined) },
@@ -242,11 +298,12 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     // show() resets presentation to medium/non-centered. Apply options only
     // after the new dialog has mounted, not before show().
     ctx.ui.dialog.set({ size: "xlarge", centered: true })
+    if (state().error) notify(state().error!, "error")
     if (selectedFiles().length) setView(selectedFiles().some(staged) ? "staged" : "unstaged")
   })
-  const poll = setInterval(() => { if (!busy() && !confirmation() && !discard() && !oid()) void update().catch(report) }, 2000)
+  const poll = setInterval(() => { if (!busy() && !generating() && !confirmation() && !discard() && !oid()) void update().catch(report) }, 2000)
   onCleanup(() => {
-    disposed = true; generation++; diffRequest++; clearInterval(poll)
+    disposed = true; generation++; diffRequest++; clearInterval(poll); clearTimeout(noticeTimer)
     // Close cancels reads/generation, but server write transactions finish and reconcile independently.
     void props.rpc.close(review(), options).catch(() => {})
   })
@@ -263,17 +320,15 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
         <FileSidebar files={state().files} rows={tree()} selected={selected()} focused={focus() === 0} height={height()} select={select} focus={() => setFocus(0)} ref={(pane) => { filesPane = pane }} />
         <DiffPane content={content()} view={view()} scope={selectedRow()?.path} focused={focus() === 1} height={height()} toggle={toggleView} focus={() => setFocus(1)} ref={(pane) => { diffPane = pane }} />
       </box>
-      <MessagePreview message={message()} generating={generating()} focused={!expanded() && focus() === 2 && !discard() && !busy() && !oid()} focus={() => setFocus(2)} change={changeMessage} generate={() => { if (!confirmation()) void generate() }} generateDisabled={generateDisabled()} generateFocused={!expanded() && focus() === 3 && !discard()} focusGenerate={() => setFocus(3)} expanded={false} expand={expand} height={6.5} />
+      <MessagePreview message={message()} generating={generating()} focused={!expanded() && focus() === 2 && !discard() && !busy()} focus={() => setFocus(2)} change={changeMessage} generate={() => { if (!confirmation()) void generate() }} generateDisabled={generateDisabled()} generateFocused={!expanded() && focus() === 3 && !discard()} focusGenerate={() => setFocus(3)} expanded={false} expand={expand} height={6} />
       <Show when={confirmation()}><text fg={ctx.theme.text.feedback.warning.base} height={2} wrapMode="word">{status()}</text></Show>
       <Footer height={4} actions={actions()} focused={expanded() ? -1 : focus() - 4} focus={(index) => setFocus(index + 4)} shortcuts={shortcuts()} />
     </Show>
     <Show when={expanded()}><box position="absolute" left={0} top={0} width="100%" height="100%" alignItems="center" justifyContent="center" onMouseDown={(event) => event.stopPropagation()} onMouseUp={(event) => event.stopPropagation()}>
       <box width={Math.max(1, Math.min(100, width() - 8))} height={editorHeight()} border borderColor={ctx.theme.border.base} paddingX={1} backgroundColor={ctx.theme.surface("dialog").background.base} flexDirection="column">
-        <box height={1} flexShrink={0} flexDirection="row" justifyContent="space-between">
-          <text fg={ctx.theme.text.base}>Edit commit message</text>
-          <text id="message-editor-close" width={3} height={1} selectable={false} fg={ctx.theme.text.muted} onMouseUp={closeEditor}>esc</text>
-        </box>
-        <MessagePreview message={message()} generating={generating()} focused={expanded()} focus={() => setFocus(2)} change={changeMessage} generate={() => { if (!confirmation()) void generate() }} generateDisabled={generateDisabled()} generateFocused={false} focusGenerate={() => {}} expanded height={editorHeight() - 3} />
+        <MessagePreview message={message()} generating={generating()} focused={expanded() && editorFocus() === -1} focus={() => setEditorFocus(-1)} change={changeMessage} generate={() => { if (!confirmation()) void generate() }} generateDisabled={generateDisabled()} generateFocused={false} focusGenerate={() => {}} expanded close={closeEditor} height={editorHeight() - 3} />
+        <EditorActions actions={editorActions()} focused={editorFocus()} focus={setEditorFocus} />
+        <DialogNotice notice={notice()} width={Math.max(1, Math.min(100, width() - 8))} dismiss={dismissNotice} />
       </box>
     </box></Show>
     <Show when={discard()}>{(current) => <box position="absolute" left={0} top={0} width="100%" height="100%" alignItems="center" justifyContent="center">
@@ -301,5 +356,6 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
         </box>
       </box>
     </box>}</Show>
+    <Show when={!expanded()}><DialogNotice notice={notice()} width={width()} dismiss={dismissNotice} /></Show>
   </box>
 }

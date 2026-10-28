@@ -75,18 +75,23 @@ The current conversation's agent, model, and permissions are never changed.
    Untracked files in the selected scope are removed, but ignored files and nested
    untracked repositories are preserved. Newly added submodules must be removed
    outside this dialog to preserve their repositories.
-4. Write in **Commit message**, or press `g` outside the input to generate a
+4. Write in **Commit message**, or press `Ctrl+G` (including inside the input) to generate a
    message immediately, without a confirmation. While waiting, **Generating
    commit message** shimmers like OpenCode's session title. Generated messages
    remain editable. Leaving the input empty auto-generates a message when you
    commit. Generation does not run merely from opening the dialog or staging.
    Staging invalidates generated messages but preserves manually edited text.
+   Generate refreshes Git status first. If nothing is staged, it shows a hint
+   to stage files with Space rather than silently ignoring the request.
+   Generate, Commit, and Commit and Push show validation feedback when nothing
+   is staged. Notifications render inside the review dialog (or the expanded
+   editor while it is open), dismiss automatically, and can be closed with ×.
 5. Choose Commit or Commit and push. Push is separately confirmed with its
    remote/ref and outgoing count, including earlier unpublished commits.
 
 | Input | Action |
 | --- | --- |
-| Tab / Shift+Tab | Files → diff → commit message → footer controls (and backward) |
+| Tab / Shift+Tab | Files → diff → commit message → Generate → footer controls (and backward) |
 | Left / Right | Switch review panes, or footer controls |
 | Up / Down | Files: previous / next file; Diff: scroll up / down |
 | PageUp / PageDown | Scroll the focused review pane by a page |
@@ -95,7 +100,8 @@ The current conversation's agent, model, and permissions are never changed.
 | `d` in a review pane | Open scoped discard menu for selected file / directory / submodule |
 | Enter / Space on a footer control | Activate that control, never stage a file |
 | `v` or click diff header | Switch labeled Staged / Unstaged views |
-| `g` outside the input | Generate from the current staged snapshot |
+| Ctrl+G | Generate from the current staged snapshot, including while editing |
+| `e` with message input focused / click expand | Expand the editor in a nested dialog; Esc or its top-right button returns to the main panel |
 | `c` | Commit the approved snapshot |
 | `p` | Commit then ask to push, or retry push after commit success |
 | Esc | Close; explicit staging persists |
@@ -106,8 +112,16 @@ their side-by-side arrangement. The centered dialog uses the terminal width
 minus four columns, up to 180 columns. Pane focus is indicated by the outline,
 without a textual “focused” label. Theme tokens are read reactively, including
 `text.feedback.success.base` for staged paths and semantic diff/focus colors.
-Inside the message input, letters and navigation keys edit text normally;
-Tab leaves the input. Set the plugin option `animations` to `false` to disable
+Inside the message input, letters and navigation keys edit text normally, except
+`e` opens the nested editor. Inside that dialog, `e` types normally and Esc
+returns to the same message in the main panel. Tab leaves the inline input.
+The expanded editor has compact filled **Commit and Push**, **Commit**, and **Done ↵**
+buttons. Enter in the editor saves and returns; Shift+Enter inserts a newline.
+Tab cycles through the editor and buttons. With a button focused, Enter/Space
+activates it, and `c` / `p` retain the commit / commit-and-push shortcuts.
+Commit and Push still returns to the main panel for push confirmation.
+The main footer shows only shortcuts relevant to the currently focused area.
+Set the plugin option `animations` to `false` to disable
 the generation shimmer (the host's animation preference is not exposed to plugins).
 
 ## Safety and limitations
@@ -161,7 +175,7 @@ No generation session tab is opened.
 Only the staged snapshot, branch, up to 20 recent non-merge subjects, and eligible
 regular root `AGENTS.md` content are sent. Repository-derived policy is untrusted
 user context, never system instructions. Generation sends this content immediately,
-without a confirmation: inspect for credentials and secrets **before pressing g
+without a confirmation: inspect for credentials and secrets **before pressing Ctrl+G
 or committing with an empty message**. A non-empty manual message skips generation.
 Diffs, prompts, credentials, and generated content are not logged by the plugin.
 
@@ -170,7 +184,7 @@ The static instruction block is pinned to T3 Code revision
 this plugin deliberately places the unchanged static block in the **system**
 role and dynamic context in the user role. Policy, summary, and patch are capped
 at 20,000 / 6,000 / 40,000 characters, with a 49,000-byte initial patch capture.
-Truncation is marked in the prompt and UI. JSON is extracted and validated
+Truncation is marked in the prompt. JSON is extracted and validated
 locally; empty/invalid subjects are rejected rather than replaced with a generic
 message. See [LICENSE](LICENSE) for copyright and permission notices.
 
