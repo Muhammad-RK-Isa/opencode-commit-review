@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin/tui"
 import { CommitReview } from "./rpc.js"
 import { CommitDialog } from "./ui/commit-dialog.js"
 import { assertV2 } from "./version.js"
+import { errorMessage } from "./errors.js"
 
 export default Plugin.define({
   id: "commit-review.tui",
@@ -19,7 +20,7 @@ export default Plugin.define({
           const rpc = ctx.client.rpc(CommitReview)
           const initial = await rpc.open(undefined, { location })
           ctx.ui.dialog.show(() => <CommitDialog initial={initial} rpc={rpc} location={location} />)
-        } catch (cause) { ctx.ui.toast.show({ variant: "error", message: cause instanceof Error ? cause.message : String(cause) }) }
+        } catch (cause) { ctx.ui.toast.show({ variant: "error", message: errorMessage(cause) }) }
         finally { opening = false }
       },
     }] }))

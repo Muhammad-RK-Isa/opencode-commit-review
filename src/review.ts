@@ -29,7 +29,8 @@ export class Review {
     let snap: Snapshot | undefined
     try { snap = await snapshot(this.repo, this.config) } catch { error = "Unmerged index: resolve conflicts outside the dialog before generating or committing." }
     if (snap?.revision !== this.approved?.revision) { this.cancel(); this.approved = snap }
-    return { reviewID: this.id, revision: snap?.revision ?? "", branch: snap?.branch ?? "(unmerged)", model: this.model, files, hasStaged: files.some(staged), ...(error ? { error } : {}) }
+    const outgoing = await destination(this.repo).catch(() => undefined)
+    return { reviewID: this.id, revision: snap?.revision ?? "", branch: snap?.branch ?? "(unmerged)", head: snap?.head ?? "", unpushed: outgoing?.count ?? 0, model: this.model, files, hasStaged: files.some(staged), ...(error ? { error } : {}) }
   }
   private async fresh(revision: string) {
     this.live()
@@ -100,7 +101,7 @@ export class Review {
   push(oid: string, approved: Destination) {
     return serialize(this.repo, async () => {
       this.live()
-      if (!this.committed?.matches || this.committed.oid !== oid) throw new Error("Only the confirmed matching commit from this review can be pushed")
+      if (this.committed ? !this.committed.matches || this.committed.oid !== oid : !oid || this.approved?.head !== oid) throw new Error("Only the reviewed HEAD or confirmed matching commit can be pushed")
       await push(this.repo, oid, approved)
       return { pushed: true as const }
     })

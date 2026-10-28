@@ -1,9 +1,10 @@
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js"
 import { usePlugin } from "@opencode/plugin/tui"
 import { useTerminalDimensions } from "@opentui/solid"
-import type { ScrollBoxRenderable } from "@opentui/core"
+import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import type { RpcClient } from "@opencode/client/promise/api"
 import { CommitReview } from "../rpc.js"
+import { errorMessage } from "../errors.js"
 import { displayPath, staged, unstaged } from "../git/status.js"
 import type { Destination } from "../git/push.js"
 import { FileSidebar } from "./file-sidebar.js"
@@ -48,6 +49,8 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     return color.a > 0 && !color.equals(ctx.theme.surface("dialog").background.base) ? color : ctx.theme.background.raised.high
   }
   const [target, setTarget] = createSignal<Destination>()
+  const [pushOid, setPushOid] = createSignal("")
+  const [pushHovered, setPushHovered] = createSignal(false)
   const [oid, setOid] = createSignal("")
   const [pushable, setPushable] = createSignal(false)
   const [pushed, setPushed] = createSignal(false)
@@ -71,7 +74,7 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     clearTimeout(noticeTimer); setNotice({ message, variant })
     noticeTimer = setTimeout(() => setNotice(undefined), 6000)
   }
-  const report = (cause: unknown) => { if (!disposed) { const message = cause instanceof Error ? cause.message : String(cause); setStatus(message); setError(true); notify(message, "error") } }
+  const report = (cause: unknown) => { if (!disposed) { const message = errorMessage(cause); setStatus(message); setError(true); notify(message, "error") } }
   function invalidate() {
     generation++; if (!manual()) setMessage(""); setGenerating(false)
   }
@@ -164,7 +167,9 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   }
   async function askPush() {
     const destination = await props.rpc.pushDestination(review(), options)
-    setTarget(destination); setConfirmation("push"); setFocus(4)
+    if (disposed) return
+    setPushOid(oid() || state().head)
+    setTarget(destination); setExpanded(false); setConfirmation("push"); setFocus(4)
     setStatus(`Publish ${destination.count} outgoing commit(s) to ${destination.remote}/${destination.ref}${destination.needsUpstream ? " · establish new upstream? (count includes all local history)" : "?"}`)
   }
   async function submit(andPush: boolean) {
@@ -186,6 +191,7 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
       if (expanded()) { setExpanded(false); setFocus(4) }
       setStatus(result.warning ?? `Committed ${result.oid.slice(0, 12)}`); setError(!result.matches)
       if (!result.matches) notify(status(), "error")
+      await update()
       if (andPush && result.matches && !disposed) await askPush()
     } catch (cause) {
       if (disposed) ctx.ui.toast.show({ variant: "error", message: "Commit error. Check Git before retrying. No push attempted." })
@@ -199,15 +205,23 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     if (!pushable()) { notify("Push blocked. Review the local commit first."); return }
     try { await askPush() } catch (cause) { report(cause) }
   }
+  const pushDisabled = () => busy() || generating() || !!confirmation() || !!discard() || state().unpushed === 0
+  async function pushOutgoing() {
+    if (pushDisabled()) return
+    if (oid()) { await retryPush(); return }
+    setBusy(true)
+    try { await update(); await askPush() } catch (cause) { report(cause) }
+    finally { if (!disposed) setBusy(false) }
+  }
   async function confirm() {
     const action = confirmation(); setConfirmation(undefined); setFocus(0)
     const destination = target()
     if (action !== "push" || !destination || busy()) return
     setBusy(true); setStatus("Pushing confirmed commit…")
     try {
-      await props.rpc.pushExistingCommit({ ...review(), oid: oid(), destination }, options)
+      await props.rpc.pushExistingCommit({ ...review(), oid: pushOid(), destination }, options)
       if (disposed) ctx.ui.toast.show({ variant: "success", message: "Commit pushed." })
-      else { setPushed(true); setError(false) }
+      else { setPushed(!!oid()); setError(false); await update() }
     }
     catch (cause) {
       if (disposed) ctx.ui.toast.show({ variant: "error", message: "Push failed. Local commit kept; check Git before retrying." })
@@ -219,8 +233,8 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     { label: "Confirm push", run: () => void confirm(), disabled: busy() },
     { label: "Cancel", run: () => { setConfirmation(undefined); setFocus(0) } },
   ] : [
-    { label: "Commit: c", disabled: busy() || generating(), run: () => void submit(false) },
-    { label: oid() ? pushed() ? "Pushed" : "Retry push: p" : "Commit and push: p", disabled: busy() || generating(), run: () => void (oid() ? retryPush() : submit(true)) },
+    { label: "Commit", disabled: busy() || generating(), run: () => void submit(false) },
+    { label: oid() ? pushed() ? "Pushed" : "Retry push" : "Commit and push", primary: true, disabled: busy() || generating(), run: () => void (oid() ? retryPush() : submit(true)) },
   ])
   const activate = () => { if (focus() === 3) { if (!confirmation()) void generate(); return }; const action = actions()[focus() - 4]; if (action && !action.disabled) action.run() }
   const expand = () => { if (!busy() && !discard()) { setFocus(2); setEditorFocus(-1); setExpanded(true) } }
@@ -228,26 +242,24 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   const editorActions = createMemo<FooterAction[]>(() => [
     { label: "Commit and Push", disabled: busy() || generating(), run: () => void submit(true) },
     { label: "Commit", disabled: busy() || generating(), run: () => void submit(false) },
-    { label: "Done ↵", run: closeEditor },
+    { label: "Done", run: closeEditor },
   ])
   const activateEditor = () => {
     const action = editorActions()[editorFocus() < 0 ? 2 : editorFocus()]
     if (action && !action.disabled) action.run()
   }
-  const navigateEditor = (delta: number) => setEditorFocus((current) => (current + 1 + delta + 4) % 4 - 1)
   const changeMessage = (value: string) => { generation++; setGenerating(false); setManual(true); setMessage(value) }
   const generateDisabled = () => busy() || generating() || !!confirmation() || !!discard()
   const shortcuts = createMemo(() => {
-    if (busy() || discard() || expanded()) return ""
+    if (busy() || discard() || expanded() || confirmation() || focus() > 2) return ""
     if (focus() === 2) return "e Expand  Ctrl+G Generate"
-    if (focus() === 3) return generating() ? "" : "Enter Generate"
-    if (focus() >= 4) return `Enter ${actions()[focus() - 4]?.label.replace(/: [cp]$/, "") ?? "Activate"}`
     const files = selectedFiles()
     const action = files.length && files.every((file) => staged(file) && !unstaged(file)) ? "Unstage" : "Stage"
     return `Space ${action}  d Discard${focus() === 1 ? "  v Switch view" : ""}`
   })
   const close = () => { if (expanded()) closeEditor(); else if (discard()) setDiscard(undefined); else ctx.ui.dialog.clear() }
   const navigateFocus = (delta: number) => setFocus((current) => (current + delta + 4 + actions().length) % (4 + actions().length))
+  const navigatePanel = (delta: number) => setFocus((current) => (Math.min(current, 2) + delta + 3) % 3)
   function move(delta: number, page = false) {
     if (focus() === 0 && !page && tree().length) {
       const position = tree().findIndex((row) => treeRowKey(row) === selected())
@@ -261,7 +273,7 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   // mode can be superseded by that host effect, leaving only native scrolling.
   ctx.keymap.layer(() => ({ mode: "modal", priority: 100, commands: [
     { bind: "escape", run: close },
-    { bind: "tab", run: () => navigateFocus(1) }, { bind: "shift+tab", run: () => navigateFocus(-1) },
+    { bind: "tab", run: () => navigatePanel(1) }, { bind: "shift+tab", run: () => navigatePanel(-1) },
     { bind: "left", run: () => { if (focus() <= 1) setFocus(0); else navigateFocus(-1) } },
     { bind: "right", run: () => { if (focus() <= 1) setFocus(1); else navigateFocus(1) } },
     { bind: "up", run: () => move(-1) }, { bind: "down", run: () => move(1) },
@@ -271,21 +283,20 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
     { bind: "d", run: askDiscard },
     { bind: "v", run: toggleView }, { bind: "ctrl+g", run: () => { if (!confirmation()) void generate() } },
     { bind: "e", run: expand },
-    { bind: "c", run: () => void submit(false) }, { bind: "p", run: () => { if (!confirmation()) void (oid() ? retryPush() : submit(true)) } },
-  ].map((command) => ({ ...command, enabled: command.bind === "escape" || (usable() && !discard() && (command.bind === "ctrl+g" || (!expanded() && (command.bind === "e" ? focus() === 2 && !busy() : focus() !== 2 || command.bind === "tab" || command.bind === "shift+tab")))) })) }))
+    { bind: "ctrl+c", run: () => void submit(false) }, { bind: "ctrl+p", run: () => { if (!confirmation()) void (oid() ? retryPush() : submit(true)) } },
+    { bind: "ctrl+shift+p", run: () => void pushOutgoing() },
+  ].map((command) => ({ ...command, enabled: command.bind === "escape" || (usable() && !discard() && (["ctrl+g", "ctrl+c", "ctrl+p", "ctrl+shift+p"].includes(command.bind) || (!expanded() && (command.bind === "e" ? focus() === 2 && !busy() : focus() !== 2 || command.bind === "tab" || command.bind === "shift+tab")))) })) }))
   ctx.keymap.layer(() => ({ mode: "modal", priority: 105, commands: [
     { bind: "return", run: activateEditor, enabled: expanded() },
-    { bind: "tab", run: () => navigateEditor(1), enabled: expanded() },
-    { bind: "shift+tab", run: () => navigateEditor(-1), enabled: expanded() },
+    { bind: "tab", run: () => setEditorFocus(-1), enabled: expanded() },
+    { bind: "shift+tab", run: () => setEditorFocus(-1), enabled: expanded() },
     { bind: "space", run: activateEditor, enabled: expanded() && editorFocus() >= 0 },
-    { bind: "c", run: () => { const action = editorActions()[1]; if (!action.disabled) action.run() }, enabled: expanded() && editorFocus() >= 0 },
-    { bind: "p", run: () => { const action = editorActions()[0]; if (!action.disabled) action.run() }, enabled: expanded() && editorFocus() >= 0 },
   ] }))
   const moveDiscard = (delta: number) => { setDiscardOption((index) => (index + delta + 3) % 3) }
   ctx.keymap.layer(() => ({ mode: "modal", priority: 110, commands: [
     { bind: "escape", run: () => setDiscard(undefined) },
     { bind: "up", run: () => moveDiscard(-1) }, { bind: "down", run: () => moveDiscard(1) },
-    { bind: "tab", run: () => moveDiscard(1) }, { bind: "shift+tab", run: () => moveDiscard(-1) },
+    { bind: "tab", run: () => {} }, { bind: "shift+tab", run: () => {} },
     { bind: "return", run: () => void applyDiscard() }, { bind: "space", run: () => void applyDiscard() },
   ].map((command) => ({ ...command, enabled: !!discard() })) }))
   const selectedPath = createMemo(() => selectedRow() ? treeRowKey(selectedRow()!) : undefined)
@@ -312,7 +323,13 @@ export function CommitDialog(props: { initial: ReviewState; rpc: ReviewClient; l
   // Cancel the host's top inset so its narrower surface cannot protrude above ours.
   return <box id="commit-dialog" flexDirection="column" width={width()} marginLeft={horizontalInset()} marginTop={-1} backgroundColor={ctx.theme.surface("dialog").background.base} height={dialogHeight()} paddingX={2} paddingY={1}>
     <box height={1} flexShrink={0} flexDirection="row" justifyContent="space-between">
-      <text height={1} flexGrow={1} flexShrink={1} wrapMode="none" fg={ctx.theme.text.base}>Commit changes · {state().branch}</text>
+      <box height={1} flexGrow={1} flexShrink={1} flexDirection="row">
+        <text height={1} flexShrink={1} wrapMode="none" fg={ctx.theme.text.base}>Commit changes · {state().branch}</text>
+        <text fg={ctx.theme.text.muted}> · </text>
+        <box height={1} flexShrink={0} onMouseOver={() => setPushHovered(true)} onMouseOut={() => setPushHovered(false)} onMouseDown={() => void pushOutgoing()}>
+          <text selectable={false} fg={pushDisabled() ? ctx.theme.text.muted : pushHovered() ? ctx.theme.text.action.primary.base : ctx.theme.text.base} attributes={!pushDisabled() && pushHovered() ? TextAttributes.BOLD : 0}>Push ({state().unpushed})</text>
+        </box>
+      </box>
       <text id="commit-close" height={1} width={3} flexShrink={0} selectable={false} fg={ctx.theme.text.muted} onMouseUp={close}>esc</text>
     </box>
     <Show when={usable()} fallback={<text fg={ctx.theme.text.feedback.warning.base}>Resize terminal to at least 84 × 26. Escape closes; staging is retained.</text>}>

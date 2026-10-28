@@ -102,8 +102,9 @@ The current conversation's agent, model, and permissions are never changed.
 | `v` or click diff header | Switch labeled Staged / Unstaged views |
 | Ctrl+G | Generate from the current staged snapshot, including while editing |
 | `e` with message input focused / click expand | Expand the editor in a nested dialog; Esc or its top-right button returns to the main panel |
-| `c` | Commit the approved snapshot |
-| `p` | Commit then ask to push, or retry push after commit success |
+| Ctrl+C | Commit the approved snapshot, including while editing |
+| Ctrl+P | Commit then ask to push, or retry push after commit success |
+| Ctrl+Shift+P / click Push beside the branch | Ask to push existing outgoing commits; the button shows their count |
 | Esc | Close; explicit staging persists |
 
 Minimum usable terminal size: **84 columns × 26 rows**. Below it, the dialog
@@ -115,12 +116,13 @@ without a textual “focused” label. Theme tokens are read reactively, includi
 Inside the message input, letters and navigation keys edit text normally, except
 `e` opens the nested editor. Inside that dialog, `e` types normally and Esc
 returns to the same message in the main panel. Tab leaves the inline input.
-The expanded editor has compact filled **Commit and Push**, **Commit**, and **Done ↵**
+The expanded editor has compact filled **Commit and Push**, **Commit**, and **Done**
 buttons. Enter in the editor saves and returns; Shift+Enter inserts a newline.
 Tab cycles through the editor and buttons. With a button focused, Enter/Space
-activates it, and `c` / `p` retain the commit / commit-and-push shortcuts.
+activates it. Ctrl+C / Ctrl+P commit or commit-and-push even while editing.
 Commit and Push still returns to the main panel for push confirmation.
-The main footer shows only shortcuts relevant to the currently focused area.
+The main footer shows shortcut suggestions only for the Sidebar, Diff panel, and
+Commit message panel. Generate and Push brighten on hover.
 Set the plugin option `animations` to `false` to disable
 the generation shimmer (the host's animation preference is not exposed to plugins).
 
@@ -156,7 +158,7 @@ the generation shimmer (the host's animation preference is not exposed to plugin
   no automatic fetch occurs.
 - Failed push preserves the local commit. **Retry push** in the still-open
   dialog only pushes that commit; it never commits again. After closing,
-  use your normal Git push workflow for an already-created commit.
+  reopen the dialog and use Push beside the branch for an already-created commit.
 - Diffs are capped at 200,000 bytes / 4,000 displayed lines; large untracked
   files and binaries have explicit summaries. These are preview limits, not
   commit-content limits. No hunk editing/staging or conflict resolution exists.

@@ -6,7 +6,7 @@ const revision = review.extend({ revision: z.string() })
 const path = revision.extend({ path: z.string().min(1) })
 const file = z.object({ xy: z.string().length(2), path: z.string(), original: z.string().optional(), submodule: z.boolean().optional() })
 const destination = z.object({ remote: z.string(), ref: z.string(), branch: z.string(), count: z.number(), needsUpstream: z.boolean() })
-const state = z.object({ reviewID: z.string(), revision: z.string(), branch: z.string(), model: z.string(), files: z.array(file), hasStaged: z.boolean(), error: z.string().optional() })
+const state = z.object({ reviewID: z.string(), revision: z.string(), branch: z.string(), head: z.string(), unpushed: z.number(), model: z.string(), files: z.array(file), hasStaged: z.boolean(), error: z.string().optional() })
 function method<const T extends { input: z.ZodType; output: z.ZodType }>(definition: T) {
   return { ...definition, errors: { operation_failed: z.object({ message: z.string() }) } }
 }

@@ -8,6 +8,7 @@ export async function destination(repo: Repository): Promise<Destination> {
   const ref = (await git(repo.root, ["config", "--get", `branch.${branch}.merge`], { allowFailure: true })).text.trim()
   if (!remote || !ref) {
     const remotes = (await git(repo.root, ["remote"])).text.trim().split("\n").filter(Boolean)
+    if (!remotes.length) throw new Error("No Git remote configured. Add a remote URL with git remote add <name> <url>, then retry pushing. Your local commit is kept.")
     if (remotes.length !== 1) throw new Error("No upstream and no unique remote. Configure an upstream outside this dialog first.")
     return { remote: remotes[0], ref: `refs/heads/${branch}`, branch, count: Number((await git(repo.root, ["rev-list", "--count", "HEAD"])).text.trim()), needsUpstream: true }
   }
