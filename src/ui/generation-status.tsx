@@ -2,12 +2,11 @@ import { createSignal, For, onCleanup, onMount } from "solid-js"
 import { RGBA } from "@opentui/core"
 import { usePlugin } from "@opencode/plugin/tui"
 
-const label = "Generating commit message"
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
 const smooth = (value: number) => value ** 3 * (value * (value * 6 - 15) + 10)
 const coast = (value: number) => value < 0.2 ? value ** 2 / 0.32 : value > 0.8 ? 1 - (1 - value) ** 2 / 0.32 : (value - 0.1) / 0.8
 
-export function GenerationStatus() {
+export function ShimmerText(props: { label: string; background?: RGBA }) {
   const ctx = usePlugin()
   const [elapsed, setElapsed] = createSignal(0)
   onMount(() => {
@@ -21,8 +20,8 @@ export function GenerationStatus() {
   // https://github.com/anomalyco/opencode/blob/9adc42b/packages/tui/src/component/title-shimmer.tsx
   const color = (column: number) => {
     const foreground = ctx.theme.text.base
-    const background = ctx.theme.surface("dialog").background.base
-    const front = -4 + coast(elapsed() % 1200 / 1200) * (label.length + 22)
+    const background = props.background ?? ctx.theme.surface("dialog").background.base
+    const front = -4 + coast(elapsed() % 1200 / 1200) * (props.label.length + 22)
     const distance = front - column
     const intensity = smooth(clamp(distance < 0 ? 1 + distance / 4 : 1 - distance / 18))
     const strength = ctx.options.animations === false ? 0.6 : 0.6 * smooth(clamp(elapsed() / 240)) * (1 - intensity)
@@ -33,5 +32,5 @@ export function GenerationStatus() {
       foreground.a,
     )
   }
-  return <text height={1} selectable={false}><For each={[...label]}>{(letter, index) => <span style={{ fg: color(index()) }}>{letter}</span>}</For></text>
+  return <text height={1} selectable={false} bg={props.background}><For each={[...props.label]}>{(letter, index) => <span style={{ fg: color(index()) }}>{letter}</span>}</For></text>
 }

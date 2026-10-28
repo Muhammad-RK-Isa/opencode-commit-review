@@ -1,7 +1,7 @@
 import { usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, Show } from "solid-js"
 import { TextAttributes, type TextareaRenderable } from "@opentui/core"
-import { GenerationStatus } from "./generation-status.js"
+import { ShimmerText } from "./generation-status.js"
 
 export function MessagePreview(props: { message: string; generating: boolean; focused: boolean; focus: () => void; change: (value: string) => void; generate: () => void; generateDisabled: boolean; generateFocused: boolean; focusGenerate: () => void; expanded: boolean; expand?: () => void; close?: () => void; height: number }) {
   const ctx = usePlugin()
@@ -22,9 +22,11 @@ export function MessagePreview(props: { message: string; generating: boolean; fo
       <box height={1} flexDirection="row">
       <text fg={ctx.theme.text.muted}>Commit message</text>
       <text fg={ctx.theme.text.muted}> · </text>
-      <Show when={props.generating} fallback={<box height={1} onMouseOver={() => setGenerateHovered(true)} onMouseOut={() => setGenerateHovered(false)} focusable={!props.expanded} focused={props.generateFocused} on:focused={() => { if (!props.expanded) props.focusGenerate() }} onMouseDown={() => { props.focusGenerate(); if (!props.generateDisabled) props.generate() }} onKeyDown={(event) => { if (event.name === "return" || event.name === "space") { event.preventDefault(); event.stopPropagation(); if (!props.generateDisabled) props.generate() } }}>
+      <box height={1} onMouseOver={() => setGenerateHovered(true)} onMouseOut={() => setGenerateHovered(false)} focusable={!props.expanded} focused={props.generateFocused} on:focused={() => { if (!props.expanded) props.focusGenerate() }} onMouseDown={() => { props.focusGenerate(); if (!props.generateDisabled) props.generate() }} onKeyDown={(event) => { if (event.name === "return" || event.name === "space") { event.preventDefault(); event.stopPropagation(); if (!props.generateDisabled) props.generate() } }}>
+        <Show when={props.generating} fallback={
         <text selectable={false} fg={props.generateDisabled ? ctx.theme.text.muted : generateHovered() ? ctx.theme.text.action.primary.base : ctx.theme.text.base} attributes={!props.generateDisabled && (props.generateFocused || generateHovered()) ? TextAttributes.BOLD : 0}>Generate</text>
-      </box>}><GenerationStatus /></Show>
+        }><ShimmerText label="Generate" /></Show>
+      </box>
       </box>
       <Show when={props.focused && !props.expanded}><text height={1} selectable={false} fg={ctx.theme.text.action.primary.base} onMouseUp={() => props.expand?.()}>expand</text></Show>
       <Show when={props.expanded}><text id="message-editor-close" width={3} height={1} selectable={false} fg={ctx.theme.text.muted} onMouseUp={() => props.close?.()}>esc</text></Show>

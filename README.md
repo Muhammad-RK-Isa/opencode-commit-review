@@ -76,8 +76,8 @@ The current conversation's agent, model, and permissions are never changed.
    untracked repositories are preserved. Newly added submodules must be removed
    outside this dialog to preserve their repositories.
 4. Write in **Commit message**, or press `Ctrl+G` (including inside the input) to generate a
-   message immediately, without a confirmation. While waiting, **Generating
-   commit message** shimmers like OpenCode's session title. Generated messages
+   message immediately, without a confirmation. While waiting, the **Generate**
+   button text shimmers like OpenCode's session title. Generated messages
    remain editable. Leaving the input empty auto-generates a message when you
    commit. Generation does not run merely from opening the dialog or staging.
    Staging invalidates generated messages but preserves manually edited text.
@@ -86,8 +86,9 @@ The current conversation's agent, model, and permissions are never changed.
    Generate, Commit, and Commit and Push show validation feedback when nothing
    is staged. Notifications render inside the review dialog (or the expanded
    editor while it is open), dismiss automatically, and can be closed with ×.
-5. Choose Commit or Commit and push. Push is separately confirmed with its
-   remote/ref and outgoing count, including earlier unpublished commits.
+5. Choose Commit or Commit and push. Push runs directly without confirmation,
+   including earlier unpublished commits. Pending buttons are disabled and their
+   original labels shimmer; labels do not change on completion.
 
 | Input | Action |
 | --- | --- |
@@ -103,8 +104,8 @@ The current conversation's agent, model, and permissions are never changed.
 | Ctrl+G | Generate from the current staged snapshot, including while editing |
 | `e` with message input focused / click expand | Expand the editor in a nested dialog; Esc or its top-right button returns to the main panel |
 | Ctrl+C | Commit the approved snapshot, including while editing |
-| Ctrl+P | Commit then ask to push, or retry push after commit success |
-| Ctrl+Shift+P / click Push beside the branch | Ask to push existing outgoing commits; the button shows their count |
+| Ctrl+P | Commit and push directly, or retry push after commit success |
+| Ctrl+Shift+P / click Push beside the branch | Push existing outgoing commits directly; the button shows their count |
 | Esc | Close; explicit staging persists |
 
 Minimum usable terminal size: **84 columns × 26 rows**. Below it, the dialog
@@ -120,11 +121,11 @@ The expanded editor has compact filled **Commit and Push**, **Commit**, and **Do
 buttons. Enter in the editor saves and returns; Shift+Enter inserts a newline.
 Tab cycles through the editor and buttons. With a button focused, Enter/Space
 activates it. Ctrl+C / Ctrl+P commit or commit-and-push even while editing.
-Commit and Push still returns to the main panel for push confirmation.
+Commit and Push returns to the main panel and pushes directly.
 The main footer shows shortcut suggestions only for the Sidebar, Diff panel, and
 Commit message panel. Generate and Push brighten on hover.
 Set the plugin option `animations` to `false` to disable
-the generation shimmer (the host's animation preference is not exposed to plugins).
+button text shimmer (the host's animation preference is not exposed to plugins).
 
 ## Safety and limitations
 
@@ -153,10 +154,10 @@ the generation shimmer (the host's animation preference is not exposed to plugin
   close. A closed/reloaded review cannot be used for a new mutation.
 - Push never force-pushes, pulls, rebases, or changes branches. It sends an
   explicit approved commit object to an explicit ref. Establishing a missing
-  upstream requires confirmation and one unambiguous remote; otherwise set it
+   upstream requires one unambiguous remote; otherwise set it
   up outside the dialog. Outgoing counts are based on local tracking refs;
   no automatic fetch occurs.
-- Failed push preserves the local commit. **Retry push** in the still-open
+- Failed push preserves the local commit. **Commit and push** in the still-open
   dialog only pushes that commit; it never commits again. After closing,
   reopen the dialog and use Push beside the branch for an already-created commit.
 - Diffs are capped at 200,000 bytes / 4,000 displayed lines; large untracked
