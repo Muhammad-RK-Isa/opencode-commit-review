@@ -24,13 +24,16 @@ import { Footer, type FooterAction } from "./footer.js";
 import { EditorActions } from "./editor-actions.js";
 import { DialogNotice, type Notice } from "./dialog-notice.js";
 import { fileTree, treeRowKey, treeRowID, type TreeRow } from "./file-tree.js";
+import { RepositoryPanel } from "./repository-panel.js";
+import type { PanelTab } from "../git/panels.js";
 
 export type ReviewClient = RpcClient<typeof CommitReview>;
 export type ReviewState = Awaited<ReturnType<ReviewClient["open"]>>;
-export function CommitDialog(props: {
+export function CommitPanel(props: {
   initial: ReviewState;
   rpc: ReviewClient;
   location: { directory: string };
+  onClose: () => void;
 }) {
   const ctx = usePlugin();
   const dimensions = useTerminalDimensions();
@@ -52,7 +55,31 @@ export function CommitDialog(props: {
         )
       : [];
   };
-  const [focus, setFocus] = createSignal(0); // files, diff, message, generate, then footer controls
+  const [focus, setFocus] = createSignal(0); // files, diff, message, generate, actions, branches, commits, stash
+  const [lastLeftFocus, setLastLeftFocus] = createSignal(0);
+  const [fileTab, setFileTab] = createSignal(0);
+  const [branchTab, setBranchTab] = createSignal(0);
+  const [commitTab, setCommitTab] = createSignal(0);
+  const [entries, setEntries] = createSignal<Partial<Record<PanelTab, string[]>>>({});
+  const panelPanes: Record<number, ScrollBoxRenderable | undefined> = {};
+  const activeTab = (): PanelTab | undefined => {
+    if (focus() === 0) return ([undefined, "worktrees", "submodules"] as const)[fileTab()];
+    if (focus() === 6) return (["branches", "remotes", "tags"] as const)[branchTab()];
+    if (focus() === 7) return commitTab() ? "reflogs" : "commits";
+    if (focus() === 8) return "stash";
+  };
+  async function loadPanel(tab: PanelTab) {
+    try {
+      const rows = await props.rpc.panel({ reviewID: state().reviewID, tab }, options);
+      if (!disposed) setEntries((previous) => ({ ...previous, [tab]: rows }));
+    } catch (cause) {
+      if (!disposed) setEntries((previous) => ({ ...previous, [tab]: [errorMessage(cause)] }));
+    }
+  }
+  createEffect(() => {
+    if (focus() !== 1) setLastLeftFocus(focus());
+  });
+  createEffect(on(activeTab, (tab) => { if (tab) void loadPanel(tab); }));
   const [view, setView] = createSignal<"staged" | "unstaged">("staged");
   const [content, setContent] = createSignal("Loading diff…");
   const [message, setMessage] = createSignal("");
@@ -94,17 +121,19 @@ export function CommitDialog(props: {
   let diffRequest = 0;
   const review = () => ({ reviewID: state().reviewID });
   const revision = () => ({ ...review(), revision: state().revision });
-  const height = () =>
-    Math.max(6, Math.min(45, dimensions().height - 18));
+  const height = () => Math.max(12, dimensions().height - 10);
+  const panelHeight = (panel: number) => {
+    const extra = height() - 12;
+    const active = focus() === 6 || focus() === 8;
+    const files = Math.floor(extra * (active ? 0.25 : 0.65));
+    const commits = Math.floor(extra * (active ? 0.25 : 0.35));
+    if (panel === 0) return 3 + files;
+    if (panel === 7) return 3 + (active ? commits : extra - files);
+    return 3 + (focus() === panel ? extra - files - commits : 0);
+  };
   const usable = () => dimensions().width >= 84 && dimensions().height >= 26;
-  const width = () => Math.max(1, Math.min(180, dimensions().width - 4));
-  const dialogHeight = () =>
-    usable() ? height() + 13 : 5;
-  const editorHeight = () => Math.max(8, Math.min(24, dialogHeight() - 4));
-  // V2.2's largest host surface is 116 columns. Center wider plugin content
-  // within that surface without inspecting or mutating host renderables.
-  const horizontalInset = () =>
-    Math.floor((Math.min(116, dimensions().width - 2) - width()) / 2);
+  const width = () => Math.max(1, dimensions().width);
+  const editorHeight = () => Math.max(8, Math.min(24, dimensions().height - 4));
   const dismissNotice = () => {
     clearTimeout(noticeTimer);
     setNotice(undefined);
@@ -218,7 +247,7 @@ export function CommitDialog(props: {
   }
   function askDiscard() {
     const row = selectedRow();
-    if (busy() || focus() > 1) return;
+    if (busy() || focus() > 1 || (focus() === 0 && fileTab() !== 0)) return;
     if (oid()) {
       notify("Already committed. Reopen /commit to continue.");
       return;
@@ -500,6 +529,7 @@ export function CommitDialog(props: {
   const generateDisabled = () =>
     busy() || generating() || !!loading() || !!discard() || !!oid();
   const shortcuts = createMemo(() => {
+    if (focus() >= 6 || (focus() === 0 && fileTab() !== 0)) return "←/→ Switch tab  Ctrl+←/→ Switch group  Tab Next panel";
     if (busy() || discard() || expanded() || focus() > 2)
       return "";
     if (focus() === 2) return "e Expand  Ctrl+G Generate";
@@ -513,16 +543,24 @@ export function CommitDialog(props: {
   const close = () => {
     if (expanded()) closeEditor();
     else if (discard()) setDiscard(undefined);
-    else ctx.ui.dialog.clear();
+    else props.onClose();
   };
-  const navigateFocus = (delta: number) =>
-    setFocus(
-      (current) =>
-        (current + delta + 4 + actions().length) % (4 + actions().length),
-    );
-  const navigatePanel = (delta: number) =>
-    setFocus((current) => (Math.min(current, 2) + delta + 3) % 3);
+  const navigatePanel = (delta: number) => {
+    const panels = [0, 6, 7, 8];
+    const index = panels.indexOf(focus() === 1 ? lastLeftFocus() : focus());
+    setFocus(panels[index < 0 ? (delta > 0 ? 0 : panels.length - 1) : (index + delta + panels.length) % panels.length]);
+  };
+  const navigateGroup = () => setFocus(focus() === 1 ? lastLeftFocus() : 1);
+  const changeTab = (delta: number) => {
+    if (focus() === 0) setFileTab((tab) => (tab + delta + 3) % 3);
+    if (focus() === 6) setBranchTab((tab) => (tab + delta + 3) % 3);
+    if (focus() === 7) setCommitTab((tab) => (tab + delta + 2) % 2);
+  };
   function move(delta: number, page = false) {
+    if (activeTab()) {
+      panelPanes[focus()]?.scrollBy(delta * (page ? Math.max(1, panelHeight(focus()) - 3) : 1));
+      return;
+    }
     if (focus() === 0 && !page && tree().length) {
       const position = tree().findIndex(
         (row) => treeRowKey(row) === selected(),
@@ -536,29 +574,20 @@ export function CommitDialog(props: {
         delta * (page ? height() - 4 : 1),
       );
   }
-  // The host pushes its modal mode when showing the dialog. A separately pushed
-  // mode can be superseded by that host effect, leaving only native scrolling.
+  // Own the page's input mode; host dialogs can temporarily push modal above it.
+  const popMode = ctx.keymap.mode.push("commit-review");
+  onCleanup(popMode);
   ctx.keymap.layer(() => ({
-    mode: "modal",
+    mode: "commit-review",
     priority: 100,
     commands: [
       { bind: "escape", run: close },
       { bind: "tab", run: () => navigatePanel(1) },
       { bind: "shift+tab", run: () => navigatePanel(-1) },
-      {
-        bind: "left",
-        run: () => {
-          if (focus() <= 1) setFocus(0);
-          else navigateFocus(-1);
-        },
-      },
-      {
-        bind: "right",
-        run: () => {
-          if (focus() <= 1) setFocus(1);
-          else navigateFocus(1);
-        },
-      },
+      { bind: "left", run: () => changeTab(-1) },
+      { bind: "right", run: () => changeTab(1) },
+      { bind: "ctrl+left", run: navigateGroup },
+      { bind: "ctrl+right", run: navigateGroup },
       { bind: "up", run: () => move(-1) },
       { bind: "down", run: () => move(1) },
       { bind: "pageup", run: () => move(-1, true) },
@@ -566,8 +595,8 @@ export function CommitDialog(props: {
       {
         bind: "space",
         run: () => {
-          if (focus() >= 3) activate();
-          else void toggleStage();
+           if (focus() >= 3 && focus() <= 5) activate();
+           else if (focus() === 1 || (focus() === 0 && fileTab() === 0)) void toggleStage();
         },
       },
       {
@@ -605,13 +634,17 @@ export function CommitDialog(props: {
             (!expanded() &&
               (command.bind === "e"
                 ? focus() === 2 && !busy()
-                : focus() !== 2 ||
-                  command.bind === "tab" ||
-                  command.bind === "shift+tab")))),
+                : command.bind === "left" || command.bind === "right"
+                  ? [0, 6, 7, 8].includes(focus())
+                  : focus() !== 2 ||
+                    command.bind === "tab" ||
+                    command.bind === "shift+tab" ||
+                    command.bind === "ctrl+left" ||
+                    command.bind === "ctrl+right")))),
     })),
   }));
   ctx.keymap.layer(() => ({
-    mode: "modal",
+    mode: "commit-review",
     priority: 105,
     commands: [
       { bind: "return", run: activateEditor, enabled: expanded() },
@@ -628,7 +661,7 @@ export function CommitDialog(props: {
     setDiscardOption((index) => (index + delta + 3) % 3);
   };
   ctx.keymap.layer(() => ({
-    mode: "modal",
+    mode: "commit-review",
     priority: 110,
     commands: [
       { bind: "escape", run: () => setDiscard(undefined) },
@@ -659,9 +692,7 @@ export function CommitDialog(props: {
     ),
   );
   onMount(() => {
-    // show() resets presentation to medium/non-centered. Apply options only
-    // after the new dialog has mounted, not before show().
-    ctx.ui.dialog.set({ size: "xlarge", centered: true });
+    void loadPanel("commits");
     if (state().error) notify(state().error!, "error");
     if (selectedFiles().length)
       setView(selectedFiles().some(staged) ? "staged" : "unstaged");
@@ -679,20 +710,21 @@ export function CommitDialog(props: {
     // Close cancels reads/generation, but server write transactions finish and reconcile independently.
     void props.rpc.close(review(), options).catch(() => {});
   });
-  // The base theme may intentionally be transparent. Paint the same raised
-  // dialog surface as the host across our entire (potentially wider) rectangle.
-  // Cancel the host's top inset so its narrower surface cannot protrude above ours.
+  // Cover the terminal, including host chrome, with an opaque review surface.
   return (
     <box
-      id="commit-dialog"
+      id="commit-panel"
+      position="absolute"
+      zIndex={2500}
+      left={0}
+      top={0}
       flexDirection="column"
       width={width()}
-      marginLeft={horizontalInset()}
-      marginTop={-1}
       backgroundColor={ctx.theme.surface("dialog").background.base}
-      height={dialogHeight()}
+      height={dimensions().height}
       paddingX={2}
-      paddingY={1}
+      paddingTop={1}
+      paddingBottom={1}
     >
       <box
         height={1}
@@ -757,19 +789,36 @@ export function CommitDialog(props: {
           </text>
         }
       >
-        <box height={height()} flexDirection="row">
+        <box height={height()} flexGrow={1} minHeight={12} flexDirection="row">
+          <box width="40%" height="100%" flexDirection="column">
+          <RepositoryPanel tabs={["Files", "Worktrees", "Submodules"]} active={fileTab()} change={setFileTab}
+            focused={focus() === 0} focus={() => setFocus(0)} height={panelHeight(0)}
+            entries={entries()[fileTab() === 1 ? "worktrees" : "submodules"]} ref={(pane) => { panelPanes[0] = pane; }}>
+          <Show when={fileTab() === 0}>
           <FileSidebar
             files={state().files}
             rows={tree()}
             selected={selected()}
-            focused={focus() === 0}
-            height={height()}
+            focused={focus() === 0 && fileTab() === 0}
+            height={panelHeight(0)}
             select={select}
             focus={() => setFocus(0)}
             ref={(pane) => {
               filesPane = pane;
             }}
           />
+          </Show>
+          </RepositoryPanel>
+          <RepositoryPanel tabs={["Local branches", "Remotes", "Tags"]} active={branchTab()} change={setBranchTab}
+            focused={focus() === 6} focus={() => setFocus(6)} height={panelHeight(6)} collapsed={focus() !== 6}
+            entries={entries()[(["branches", "remotes", "tags"] as const)[branchTab()]]} ref={(pane) => { panelPanes[6] = pane; }} />
+          <RepositoryPanel tabs={["Commits", "Reflogs"]} active={commitTab()} change={setCommitTab}
+            focused={focus() === 7} focus={() => setFocus(7)} height={panelHeight(7)}
+            entries={entries()[commitTab() ? "reflogs" : "commits"]} ref={(pane) => { panelPanes[7] = pane; }} />
+          <RepositoryPanel tabs={["Stash"]} active={0} change={() => {}}
+            focused={focus() === 8} focus={() => setFocus(8)} height={panelHeight(8)} collapsed={focus() !== 8}
+            entries={entries().stash} ref={(pane) => { panelPanes[8] = pane; }} />
+          </box>
           <DiffPane
             content={content()}
             view={view()}
@@ -800,7 +849,7 @@ export function CommitDialog(props: {
           height={6}
         />
         <Footer
-          height={4}
+          height={1}
           actions={actions()}
           focused={expanded() ? -1 : focus() - 4}
           focus={(index) => setFocus(index + 4)}

@@ -17,6 +17,7 @@ export const CommitReview = Rpc.define({
   methods: {
     open: method({ input: z.undefined(), output: state }),
     status: method({ input: review, output: state }),
+    panel: method({ input: review.extend({ tab: z.enum(["worktrees", "submodules", "branches", "remotes", "tags", "commits", "reflogs", "stash"]) }), output: z.array(z.string()) }),
     close: method({ input: review, output: z.undefined() }),
     diff: method({ input: review.extend({ path: z.string(), view: z.enum(["staged", "unstaged"]) }), output: z.string() }),
     stageFile: method({ input: path, output: state }),

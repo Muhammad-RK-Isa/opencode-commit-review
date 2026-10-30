@@ -1,6 +1,6 @@
 # OpenCode Commit Review
 
-An **OpenCode V2-only** plugin. `/commit` opens a native OpenTUI/Solid dialog with
+An **OpenCode V2-only** plugin. `/commit` opens a full-screen native OpenTUI/Solid panel with
 a focusable file sidebar, read-only staged/unstaged diffs, real Git staging,
 an editable commit message, and **Commit** / **Commit and push** controls.
 No browser, external TUI, conversational command, or session panel is involved.
@@ -74,17 +74,17 @@ The current conversation's agent, model, and permissions are never changed.
    both index and working tree; unstaged changes restores the index version.
    Untracked files in the selected scope are removed, but ignored files and nested
    untracked repositories are preserved. Newly added submodules must be removed
-   outside this dialog to preserve their repositories.
+   outside this panel to preserve their repositories.
 4. Write in **Commit message**, or press `Ctrl+G` (including inside the input) to generate a
    message immediately, without a confirmation. While waiting, the **Generate**
    button text shimmers like OpenCode's session title. Generated messages
    remain editable. Leaving the input empty auto-generates a message when you
-   commit. Generation does not run merely from opening the dialog or staging.
+   commit. Generation does not run merely from opening the panel or staging.
    Staging invalidates generated messages but preserves manually edited text.
    Generate refreshes Git status first. If nothing is staged, it shows a hint
    to stage files with Space rather than silently ignoring the request.
    Generate, Commit, and Commit and Push show validation feedback when nothing
-   is staged. Notifications render inside the review dialog (or the expanded
+   is staged. Notifications render inside the review panel (or the expanded
    editor while it is open), dismiss automatically, and can be closed with ×.
 5. Choose Commit or Commit and push. Push runs directly without confirmation,
    including earlier unpublished commits. Pending buttons are disabled and their
@@ -92,8 +92,9 @@ The current conversation's agent, model, and permissions are never changed.
 
 | Input | Action |
 | --- | --- |
-| Tab / Shift+Tab | Files → diff → commit message → Generate → footer controls (and backward) |
-| Left / Right | Switch review panes, or footer controls |
+| Tab / Shift+Tab | Files → branches → commits → stash (and backward); skips diff, message input, and buttons |
+| Left / Right | Cycle tabs in the focused repository panel |
+| Ctrl+Left / Ctrl+Right | Switch between the non-diff group and diff; restores the last non-diff focus |
 | Up / Down | Files: previous / next file; Diff: scroll up / down |
 | PageUp / PageDown | Scroll the focused review pane by a page |
 | Mouse wheel | Scroll the pane under the pointer, without selecting files |
@@ -106,12 +107,12 @@ The current conversation's agent, model, and permissions are never changed.
 | Ctrl+C | Commit the approved snapshot, including while editing |
 | Ctrl+P | Commit and push directly, or retry push after commit success |
 | Ctrl+Shift+P / click Push beside the branch | Push existing outgoing commits directly; the button shows their count |
-| Esc | Close; explicit staging persists |
+| Esc | Return to the previous screen; explicit staging persists |
 
-Minimum usable terminal size: **84 columns × 26 rows**. Below it, the dialog
+Minimum usable terminal size: **84 columns × 26 rows**. Below it, the panel
 shows a resize hint and disables actions other than Escape. Both panes retain
-their side-by-side arrangement. The centered dialog uses the terminal width
-minus four columns, up to 180 columns. Pane focus is indicated by the outline,
+their side-by-side arrangement. The review fills the entire terminal, with no
+width or height cap, and resizes with it. Pane focus is indicated by the outline,
 without a textual “focused” label. Theme tokens are read reactively, including
 `text.feedback.success.base` for staged paths and semantic diff/focus colors.
 Inside the message input, letters and navigation keys edit text normally, except
@@ -140,7 +141,7 @@ button text shimmer (the host's animation preference is not exposed to plugins).
   Git, not optimistically invented, with external changes polled every 2s.
 - Commit uses normal Git hooks and configured signing, without `--no-verify`,
   amend, reset, or automatic staging. In-progress merge/rebase/cherry-pick/revert
-  operations must be finished outside the dialog. Signing or hooks requiring
+  operations must be finished outside the panel. Signing or hooks requiring
   interactive stdin may fail: use an independently configured signing agent.
 - **Hook/race policy:** the real Git commit is not sandboxed. Its resulting
   HEAD tree, parent, and process outcome are checked. If a hook or concurrent
@@ -155,11 +156,11 @@ button text shimmer (the host's animation preference is not exposed to plugins).
 - Push never force-pushes, pulls, rebases, or changes branches. It sends an
   explicit approved commit object to an explicit ref. Establishing a missing
    upstream requires one unambiguous remote; otherwise set it
-  up outside the dialog. Outgoing counts are based on local tracking refs;
+  up outside the panel. Outgoing counts are based on local tracking refs;
   no automatic fetch occurs.
 - Failed push preserves the local commit. **Commit and push** in the still-open
-  dialog only pushes that commit; it never commits again. After closing,
-  reopen the dialog and use Push beside the branch for an already-created commit.
+  panel only pushes that commit; it never commits again. After closing,
+  reopen the panel and use Push beside the branch for an already-created commit.
 - Diffs are capped at 200,000 bytes / 4,000 displayed lines; large untracked
   files and binaries have explicit summaries. These are preview limits, not
   commit-content limits. No hunk editing/staging or conflict resolution exists.

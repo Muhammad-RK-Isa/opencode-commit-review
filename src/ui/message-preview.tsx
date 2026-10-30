@@ -2,6 +2,7 @@ import { usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, Show } from "solid-js"
 import { TextAttributes, type TextareaRenderable } from "@opentui/core"
 import { ShimmerText } from "./generation-status.js"
+import { focusBorder } from "./focus-border.js"
 
 export function MessagePreview(props: { message: string; generating: boolean; focused: boolean; focus: () => void; change: (value: string) => void; generate: () => void; generateDisabled: boolean; generateFocused: boolean; focusGenerate: () => void; expanded: boolean; expand?: () => void; close?: () => void; height: number }) {
   const ctx = usePlugin()
@@ -17,7 +18,7 @@ export function MessagePreview(props: { message: string; generating: boolean; fo
   createEffect(() => {
     if (props.focused) queueMicrotask(() => { if (props.focused && input && !input.isDestroyed) input.focus() })
   })
-  return <box height={props.height} flexDirection="column">
+  return <box height={props.height} flexShrink={0} flexDirection="column">
     <box height={1} flexShrink={0} flexDirection="row" justifyContent="space-between">
       <box height={1} flexDirection="row">
       <text fg={ctx.theme.text.muted}>Commit message</text>
@@ -31,7 +32,7 @@ export function MessagePreview(props: { message: string; generating: boolean; fo
       <Show when={props.focused && !props.expanded}><text height={1} selectable={false} fg={ctx.theme.text.action.primary.base} onMouseUp={() => props.expand?.()}>expand</text></Show>
       <Show when={props.expanded}><text id="message-editor-close" width={3} height={1} selectable={false} fg={ctx.theme.text.muted} onMouseUp={() => props.close?.()}>esc</text></Show>
     </box>
-    <box flexGrow={1} width="100%" border borderColor={props.focused ? ctx.theme.text.action.primary.base : ctx.theme.border.base} onMouseDown={props.focus}>
+    <box flexGrow={1} width="100%" border borderColor={props.focused ? focusBorder(ctx.theme.text.action.primary.base) : ctx.theme.border.base} onMouseDown={props.focus}>
     <textarea ref={(value) => { input = value }} height="100%" width="100%" focused={props.focused}
       on:focused={props.focus} onMouseDown={props.focus}
       placeholder="Keep empty to auto-generate commit message" placeholderColor={ctx.theme.text.muted}

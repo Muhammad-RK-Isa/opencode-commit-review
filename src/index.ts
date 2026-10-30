@@ -3,6 +3,7 @@ import { Plugin } from "@opencode/plugin"
 import { CommitReview } from "./rpc.js"
 import { repository } from "./git/run.js"
 import { diff } from "./git/diff.js"
+import { panelEntries } from "./git/panels.js"
 import { DEFAULT_MODEL, Generator, parseModel } from "./generate/message.js"
 import { Review } from "./review.js"
 import { assertV2 } from "./version.js"
@@ -37,6 +38,7 @@ export default Plugin.define({
         try { return await review.state() } catch (error) { reviews.delete(review.id); throw error }
       }, call.error),
       status: async ({ reviewID }, call) => guard(() => get(reviewID).state(), call.error),
+      panel: async ({ reviewID, tab }, call) => guard(() => panelEntries(get(reviewID).repo, tab), call.error),
       close: async ({ reviewID }) => { reviews.get(reviewID)?.close(); reviews.delete(reviewID); return undefined },
       diff: async ({ reviewID, path, view }, call) => guard(() => diff(get(reviewID).repo, path, view), call.error),
       stageFile: async ({ reviewID, revision, path }, call) => guard(() => get(reviewID).stage(path, revision, "stage"), call.error),

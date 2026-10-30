@@ -7,7 +7,7 @@ export function Footer(props: { actions: FooterAction[]; focused: number; focus:
   const ctx = usePlugin()
   const theme = () => ctx.theme.surface("dialog")
   // OpenTUI 0.7 has no button primitive: focusable boxes implement Enter/Space semantics.
-  return <box height={props.height} flexDirection="row" alignItems="center" gap={2}>
+  return <box height={props.height} flexShrink={0} flexDirection="row" alignItems="flex-start" gap={2}>
     <text height={1} flexGrow={1} flexShrink={1} wrapMode="none" fg={theme().text.muted}>{props.shortcuts}</text>
     <box flexDirection="row" gap={1} flexShrink={0} justifyContent="flex-end">
       <For each={props.actions}>{(action, index) => <ActionButton action={action} focused={props.focused === index()} focus={() => props.focus(index())} />}</For>
